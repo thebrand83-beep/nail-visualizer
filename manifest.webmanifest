@@ -1,0 +1,21 @@
+{
+  "name": "מדמה לק · Nail Polish Visualizer",
+  "short_name": "מדמה לק",
+  "description": "בחרי לוק לציפורניים לפני הטיפול · Try nail polish looks before your salon visit",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fbf6f5",
+  "theme_color": "#f6e7ea",
+  "categories": ["lifestyle", "beauty"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

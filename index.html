@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6e7ea">
+<meta name="description" content="מדמה לק ציפורניים · Nail Polish Visualizer">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="מדמה לק">
+<meta name="format-detection" content="telephone=no">
+<title>מדמה לק · Nail Polish Visualizer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">💅</span>
+    <div>
+      <h1>מדמה לק ציפורניים</h1>
+      <p class="en">Nail Polish Visualizer</p>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="stage" aria-label="תצוגת יד">
+    <div class="selection" aria-live="polite">
+      <div class="sel-he" id="selHe"></div>
+      <div class="sel-en en" id="selEn"></div>
+    </div>
+    <div class="hand-wrap">
+      <svg id="hand" viewBox="-60 -120 1238 1580" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hand preview"></svg>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="group">
+      <div class="group-head"><h2>עיצוב</h2><span class="en">Design</span></div>
+      <div class="chips" id="designs"></div>
+    </div>
+
+    <div class="group" id="frBaseGroup">
+      <div class="group-head"><h2>צבע בסיס</h2><span class="en">French base color</span></div>
+      <div class="swatches" id="frBases"></div>
+    </div>
+
+    <div class="group" id="frTipGroup">
+      <div class="group-head"><h2>צבע קצה</h2><span class="en">French tip color</span></div>
+      <div class="swatches" id="frTips"></div>
+    </div>
+
+    <div class="group" id="frDepthGroup">
+      <div class="group-head"><h2>עומק הקצה</h2><span class="en">French tip depth</span></div>
+      <input type="range" id="frDepth" min="0" max="100" step="1" value="50" aria-label="French tip depth">
+      <div class="range-ends"><span>מיקרו</span><span>עמוק</span></div>
+      <div class="seg row" id="frDepthPresets"></div>
+    </div>
+
+    <div class="group" id="finishGroup">
+      <div class="group-head"><h2>גימור</h2><span class="en">Finish</span></div>
+      <div class="chips three" id="finishes"></div>
+    </div>
+
+    <div class="group" id="glitterGroup">
+      <div class="group-head"><h2>צבע נצנצים</h2><span class="en">Glitter color</span></div>
+      <div class="swatches" id="glitters"></div>
+    </div>
+
+    <div class="group" id="typeGroup">
+      <div class="group-head"><h2>סוג לק</h2><span class="en">Polish type</span></div>
+      <div class="chips two" id="types"></div>
+    </div>
+
+    <div class="group">
+      <div class="group-head"><h2>צבע</h2><span class="en">Color</span><span class="hint" id="colorHint"></span></div>
+      <div class="swatches" id="colors"></div>
+    </div>
+
+    <div class="group two">
+      <div>
+        <div class="group-head"><h2>צורה</h2><span class="en">Shape</span></div>
+        <div class="seg" id="shapes"></div>
+      </div>
+      <div>
+        <div class="group-head"><h2>אורך</h2><span class="en">Length</span></div>
+        <div class="seg" id="lengths"></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-head"><h2>גוון עור</h2><span class="en">Skin tone</span></div>
+      <div class="swatches skins" id="skins"></div>
+    </div>
+
+    <div class="group">
+      <div class="group-head"><h2>תצוגה</h2><span class="en">View</span></div>
+      <div class="seg row" id="zooms"></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="saveBtn">שמירת הלוק כתמונה <span class="en">Save PNG</span></button>
+      <button class="btn ghost" id="removeBtn">הסרת לק <span class="en">Remove polish</span></button>
+    </div>
+    <p class="credit en">Hand image: AI-generated image</p>
+  </aside>
+</main>
+<script src="hand-photo.js"></script>
+<script src="app.js"></script>
+<script>
+  // offline support (PWA). Service workers only run over http(s), not when opened from file://
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>
