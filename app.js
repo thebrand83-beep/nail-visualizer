@@ -6,7 +6,16 @@
    ===================================================================== */
 
 /* ---------------------------------------------------------------------
-   1) POLISH COLORS — add / edit here.  { id, he, en, hex }
+   0) SHADE CATALOG — brand shades live in catalog.json (fetched at runtime,
+      cached by the service worker). catalog-fallback.js holds an inline copy
+      used when fetch() is unavailable (file://). Entry:
+      { id, brand, line, name, hex, finish: glossy|matte|glitter|chrome, holo? }
+   --------------------------------------------------------------------- */
+let CATALOG = (window.CATALOG_FALLBACK && window.CATALOG_FALLBACK.shades) || [];
+let CATALOG_META = window.CATALOG_FALLBACK || { finishes: {} };
+
+/* ---------------------------------------------------------------------
+   1) BASIC PALETTE — used by the French base / tip pickers.  { id, he, en, hex }
    --------------------------------------------------------------------- */
 const COLORS = [
   { id: 'red',      he: 'אדום קלאסי', en: 'Classic Red', hex: '#b5122a' },
@@ -102,18 +111,25 @@ const SHAPES = [
   { id: 'square', he: 'מרובע', en: 'Square' },
   { id: 'almond', he: 'שקד',   en: 'Almond' },
   { id: 'coffin', he: 'בלרינה', en: 'Ballerina / Coffin' },   // tapered sides, flat tip — best medium/long
+  { id: 'stiletto', he: 'סטילטו', en: 'Stiletto' },            // long taper to a sharp point
 ];
+/* free-edge bonus length per shape (× nail width) so pointed shapes always have room to form */
+const SHAPE_BONUS = { round: 0, square: 0, almond: 0.18, coffin: 0.14, stiletto: 0.42 };
 /* French smile-line depth: slider 0 (micro) … 100 (deep), with labeled presets */
 const FRENCH_DEPTHS = [
   { id: 'thin',   he: 'דק',     en: 'Thin / micro', v: 8 },
   { id: 'medium', he: 'בינוני', en: 'Classic',      v: 50 },
   { id: 'deep',   he: 'עמוק',   en: 'Deep',         v: 92 },
 ];
+/* Length slider 0…100 = free edge 0…1.0 × that finger's nail width; presets: */
 const LENGTHS = [
-  { id: 'short',  he: 'קצר',    en: 'Short',  ext: 0.04 },
-  { id: 'medium', he: 'בינוני', en: 'Medium', ext: 0.32 },
-  { id: 'long',   he: 'ארוך',   en: 'Long',   ext: 0.65 },
+  { id: 'short',  he: 'קצר',    en: 'Short',  v: 4 },
+  { id: 'medium', he: 'בינוני', en: 'Medium', v: 32 },
+  { id: 'long',   he: 'ארוך',   en: 'Long',   v: 65 },
 ];
+/* Width slider 80…120 % of the measured nail width. The nail-bed part only follows within
+   98–104 % (so it always hugs the real nail plate, no gaps); the free edge takes the full value. */
+const WIDTH_RANGE = [80, 120];
 // target: average skin color to tint the photo to (null = original photo)
 const SKINS = [
   { id: 'photo', he: 'מקורי', en: 'Original', hex: '#dbac99', target: null },
@@ -124,21 +140,24 @@ const SKINS = [
 ];
 const PHOTO_SKIN_AVG = [219, 172, 153];
 
-/* 6) Nail positions on the photo (image px; measured automatically from the photo's nail mask). cx,cy = cuticle center,
-      a = axis angle (deg, 0 = pointing up), w = nail width, bed = cuticle→fingertip */
+/* 6) Nail plates on the photo (image px), measured on a rotated grid over each bare nail (qa/localgrid.py):
+      cx,cy = cuticle centre, a = finger/nail axis (deg clockwise from up), w = plate width (+ a little tuck
+      under the side folds), bed = cuticle → end of nail bed, tilt = cuticle slant from finger roll
+      (negative = right corner higher). */
 const NAILS = [
-  { id: 'thumb', cx: 984.0, cy: 752.0, a: 27.0, w: 63.0, bed: 119.0 },
-  { id: 'index', cx: 798.6, cy: 203.7, a: 12.9, w: 83.0, bed: 93.0 },
-  { id: 'middle', cx: 649.5, cy: 136.7, a: 17.0, w: 81.0, bed: 88.0 },
-  { id: 'ring', cx: 491.9, cy: 213.7, a: 27.2, w: 70.0, bed: 65.5 },
-  { id: 'pinky', cx: 283.5, cy: 373.5, a: 24.9, w: 47.0, bed: 60.5 },
+  { id: 'thumb',  cx: 987.8, cy: 758.6, a: 22.0, w: 56, bed: 110, tilt: 7 },
+  { id: 'index',  cx: 793.9, cy: 197.5, a: 12.9, w: 72, bed: 86, tilt: -8 },
+  { id: 'middle', cx: 643.3, cy: 129.6, a: 17.0, w: 76, bed: 88, tilt: -10 },
+  { id: 'ring',   cx: 480.7, cy: 213.6, a: 27.2, w: 63, bed: 71, tilt: -11, lean: -4.4 },
+  { id: 'pinky',  cx: 269.5, cy: 368.1, a: 27.4, w: 45, bed: 67, tilt: -11 },
 ];
 const PHOTO = { w: 1118, h: 1440, y: 0 };            // photo placement in SVG units
 const VIEW_FULL = '-60 -120 1238 1580', VIEW_ZOOM = '30 -40 1090 1010';
 
 /* Default selection */
-const state = { frDepth: 50, frBase: 'sheer', frTip: 'white', design: 'solid', finish: 'glossy', type: 'gel', color: 'red', glitter: 'gold',
-  shape: 'almond', length: 'medium', skin: 'photo', zoom: window.matchMedia('(max-width: 900px)').matches };
+const state = { frDepth: 50, frBase: 'sheer', frTip: 'white', design: 'solid', finish: 'glossy', type: 'gel',
+  color: 'opi-big-apple-red', glitter: 'gold', catTab: 'all', catBrand: '', catQuery: '',
+  shape: 'almond', len: 32, wid: 100, skin: 'photo', zoom: window.matchMedia('(max-width: 900px)').matches };
 
 /* ===================================================================== */
 const NS = 'http://www.w3.org/2000/svg';
@@ -198,12 +217,17 @@ function buildSvg() {
   el('filter', { id: 'blur1', x: '-30%', y: '-30%', width: '160%', height: '160%' }, defs).appendChild(el('feGaussianBlur', { stdDeviation: 1.8 }));
 
   // shading gradients (objectBoundingBox → follow each nail's local frame)
-  grad('linearGradient', 'edgeShade', { x1: 0, y1: 0, x2: 1, y2: 0 },
+  R.stops.edge = grad('linearGradient', 'edgeShade', { x1: 0, y1: 0, x2: 1, y2: 0 },
     [[0, '#000', 0.55], [0.16, '#000', 0.16], [0.42, '#000', 0], [0.7, '#000', 0.04], [0.88, '#000', 0.22], [1, '#000', 0.6]], defs);
-  grad('linearGradient', 'cutShade', { x1: 0, y1: 1, x2: 0, y2: 0 }, [[0, '#000', 0.4], [0.14, '#000', 0.08], [0.3, '#000', 0]], defs);
+  R.stops.cut = grad('linearGradient', 'cutShade', { x1: 0, y1: 1, x2: 0, y2: 0 }, [[0, '#000', 0.4], [0.14, '#000', 0.08], [0.3, '#000', 0]], defs);
   grad('linearGradient', 'tipLight', { x1: 0, y1: 1, x2: 0, y2: 0 }, [[0.55, '#fff', 0], [1, '#fff', 0.18]], defs);
   grad('linearGradient', 'streak', { x1: 0, y1: 1, x2: 0, y2: 0 }, [[0, '#fff', 0], [0.25, '#fff', 0.9], [0.7, '#fff', 0.75], [1, '#fff', 0]], defs);
   grad('linearGradient', 'streakX', { x1: 0, y1: 0, x2: 1, y2: 0 }, [[0, '#fff', 0], [0.5, '#fff', 1], [1, '#fff', 0]], defs);
+  // C-curve volume: soft highlight ridge running along the nail axis (slightly toward the light, upper-left)
+  grad('linearGradient', 'ridge', { x1: 0, y1: 0, x2: 1, y2: 0 },
+    [[0, '#fff', 0], [0.3, '#fff', 0], [0.44, '#fff', 0.5], [0.5, '#fff', 0.34], [0.62, '#fff', 0], [1, '#fff', 0]], defs);
+  el('filter', { id: 'fold', x: '-30%', y: '-30%', width: '160%', height: '160%' }, defs).appendChild(el('feGaussianBlur', { stdDeviation: 2.2 }));
+  el('filter', { id: 'cutSoft', x: '-30%', y: '-30%', width: '160%', height: '160%' }, defs).appendChild(el('feGaussianBlur', { stdDeviation: 1.5 }));
   R.stops.chrome = grad('linearGradient', 'chromeGrad', { x1: 0, y1: 0, x2: 1, y2: 0.6 },
     [[0, '#000'], [0.3, '#000'], [0.55, '#000'], [0.78, '#000'], [1, '#000']], defs);
   R.stops.ombre = grad('linearGradient', 'ombreGrad', { x1: 0, y1: 1, x2: 0, y2: 0 },
@@ -215,30 +239,48 @@ function buildSvg() {
   NAILS.forEach((n, i) => buildNail(n, i, defs));
 }
 
-/* nail outline in local frame: origin = cuticle center, tip toward -y */
+/* nail outline in local frame: origin = cuticle centre, tip toward -y.
+   Built from anatomy: a curved proximal fold (cuticle, slanted by finger roll), side walls that hug the
+   finger edge, then the chosen free-edge shape. Everything scales with each finger's own plate size. */
 function nailGeom(n) {
-  const h = n.w / 2, bed = n.bed, yB = -bed;
-  const len = byId(LENGTHS, state.length), shape = state.shape;
-  let ext = n.w * len.ext + (shape === 'almond' ? n.w * 0.2 : shape === 'coffin' ? n.w * 0.14 : 0);
-  if (n.id === 'thumb') ext *= 0.6;
-  const yT = yB - ext, yc = -bed * 0.22;            // yc = cuticle corner height
-  let d = `M${-h * 0.9},${yc} C${-h * 0.5},${bed * 0.05} ${h * 0.5},${bed * 0.05} ${h * 0.9},${yc} `;
+  const ws = state.wid / 100, hp = n.w / 2;
+  const h = hp * Math.min(1.04, Math.max(0.98, ws));      // nail-bed half width (hugs the plate)
+  const ht = hp * ws;                                      // free-edge half width
+  const bed = n.bed, yB = -bed, shape = state.shape;
+  let ext = n.w * (0.015 + state.len / 100 + (SHAPE_BONUS[shape] || 0));
+  if (n.id === 'thumb') ext *= 0.7;
+  const yT = yB - ext;
+  const cdep = n.w * 0.09, tilt = n.tilt || 0;
+  const yl = -cdep - tilt, yr = -cdep + tilt, cx0 = h * 0.9;
+  const s0 = -bed * 0.45, s = yB + bed * 0.3, k = s - yT;
+  // the free edge follows the finger's own direction (lean = finger axis − plate axis, in degrees)
+  const tl = Math.tan((n.lean || 0) * Math.PI / 180);
+  const P = (x, y) => `${f2(y < s ? x + (y - s) * tl : x)},${f2(y)}`;
+  // cuticle arc (left corner → lowest point → right corner)
+  // one smooth arc that dips 'cdep' below the corners; slants with the finger roll
+  const D = cdep * 1.34;
+  const cut = `M${P(-cx0, yl)} C${P(-cx0 * 0.9, yl + D)} ${P(cx0 * 0.9, yr + D)} ${P(cx0, yr)}`;   // rounded proximal corners
+  const rWall = `C${P(cx0 + (h - cx0) * 0.9, yr - bed * 0.12)} ${P(h, s0 + bed * 0.12)} ${P(h, s0)}`;
+  const lWall = `C${P(-h, s0 + bed * 0.12)} ${P(-cx0 - (h - cx0) * 0.9, yl - bed * 0.12)} ${P(-cx0, yl)}`;
+  let tip;
   if (shape === 'square') {
-    const r = h * 0.28;
-    d += `C${h * 1.02},${yc - bed * 0.35} ${h},${yT + bed * 0.4} ${h},${yT + r} Q${h},${yT} ${h - r},${yT} L${-h + r},${yT} Q${-h},${yT} ${-h},${yT + r} C${-h},${yT + bed * 0.4} ${-h * 1.02},${yc - bed * 0.35} ${-h * 0.9},${yc} Z`;
+    const r = ht * 0.22;
+    tip = `L${P(h, s)} C${P(h, s - k * 0.4)} ${P(ht, yT + r + k * 0.25)} ${P(ht, yT + r)} Q${P(ht, yT)} ${P(ht - r, yT)} L${P(-ht + r, yT)} Q${P(-ht, yT)} ${P(-ht, yT + r)} C${P(-ht, yT + r + k * 0.25)} ${P(-h, s - k * 0.4)} ${P(-h, s)} L${P(-h, s0)}`;
   } else if (shape === 'round') {
-    d += `C${h * 1.02},${yc - bed * 0.35} ${h},${yT + h * 1.5} ${h},${yT + h * 0.95} C${h},${yT + h * 0.35} ${h * 0.55},${yT} 0,${yT} C${-h * 0.55},${yT} ${-h},${yT + h * 0.35} ${-h},${yT + h * 0.95} C${-h},${yT + h * 1.5} ${-h * 1.02},${yc - bed * 0.35} ${-h * 0.9},${yc} Z`;
+    const y0 = Math.min(s0, yT + ht), q = y0 - yT;
+    tip = `L${P(h, y0)} C${P(h, y0 - q * 0.56)} ${P(ht * 0.56, yT)} ${P(0, yT)} C${P(-ht * 0.56, yT)} ${P(-h, y0 - q * 0.56)} ${P(-h, y0)} L${P(-h, s0)}`;
   } else if (shape === 'coffin') {
-    // ballerina: straight sides along the bed, then a gentle taper to a narrow flat tip with soft corners
-    const s = yB + bed * 0.35, k = s - yT, tw = h * (ext > n.w * 0.3 ? 0.56 : 0.72), r = h * 0.13;
-    d += `C${h * 1.02},${yc - bed * 0.3} ${h},${s + bed * 0.15} ${h},${s} C${h},${s - k * 0.3} ${tw + (h - tw) * 0.18},${yT + k * 0.22} ${tw},${yT + r} ` +
-      `Q${tw},${yT} ${tw - r},${yT} L${-tw + r},${yT} Q${-tw},${yT} ${-tw},${yT + r} ` +
-      `C${-tw - (h - tw) * 0.18},${yT + k * 0.22} ${-h},${s - k * 0.3} ${-h},${s} C${-h},${s + bed * 0.15} ${-h * 1.02},${yc - bed * 0.3} ${-h * 0.9},${yc} Z`;
-  } else {
-    const s = yB + bed * 0.3, k = s - yT;
-    d += `C${h * 1.02},${yc - bed * 0.3} ${h},${s + bed * 0.15} ${h},${s} C${h},${s - k * 0.5} ${h * 0.45},${yT} 0,${yT} C${-h * 0.45},${yT} ${-h},${s - k * 0.5} ${-h},${s} C${-h},${s + bed * 0.15} ${-h * 1.02},${yc - bed * 0.3} ${-h * 0.9},${yc} Z`;
+    const tw = ht * (ext > n.w * 0.3 ? 0.56 : 0.7), r = ht * 0.13;
+    tip = `L${P(h, s)} C${P(h, s - k * 0.3)} ${P(tw + (ht - tw) * 0.18, yT + k * 0.22)} ${P(tw, yT + r)} Q${P(tw, yT)} ${P(tw - r, yT)} L${P(-tw + r, yT)} Q${P(-tw, yT)} ${P(-tw, yT + r)} C${P(-tw - (ht - tw) * 0.18, yT + k * 0.22)} ${P(-h, s - k * 0.3)} ${P(-h, s)} L${P(-h, s0)}`;
+  } else if (shape === 'stiletto') {
+    tip = `L${P(h, s)} C${P(h, s - k * 0.34)} ${P(ht * 0.14, yT + k * 0.1)} ${P(0, yT)} C${P(-ht * 0.14, yT + k * 0.1)} ${P(-h, s - k * 0.34)} ${P(-h, s)} L${P(-h, s0)}`;
+  } else {   // almond
+    tip = `L${P(h, s)} C${P(h, s - k * 0.5)} ${P(ht * 0.45, yT)} ${P(0, yT)} C${P(-ht * 0.45, yT)} ${P(-h, s - k * 0.5)} ${P(-h, s)} L${P(-h, s0)}`;
   }
-  return { d, h, yB, yT, yc, ext, bed };
+  const d = `${cut} ${rWall} ${tip} ${lWall} Z`;
+  // open path along side walls + cuticle (for the skin-fold shadow), stops at the fingertip
+  const fold = `M${P(-h, s0 - bed * 0.25)} L${P(-h, s0)} ${lWall} ${cut.replace(/^M\S+ /, '')} ${rWall} L${P(h, s0 - bed * 0.25)}`;
+  return { d, cut, fold, h, ht, yB, yT, yc: (yl + yr) / 2, ext, bed };
 }
 
 function buildNail(n, i, defs) {
@@ -246,8 +288,12 @@ function buildNail(n, i, defs) {
   R.nails[i] = N;
   const g = el('g', { transform: `translate(${n.cx},${n.cy}) rotate(${n.a})` }, svg);
   // soft-edged mask = nail shape
-  const mk = el('mask', { id: 'nm' + i, maskUnits: 'userSpaceOnUse', x: -100, y: -220, width: 200, height: 300 }, defs);
+  const mk = el('mask', { id: 'nm' + i, maskUnits: 'userSpaceOnUse', x: -120, y: -320, width: 240, height: 400 }, defs);
   N.maskPath = el('path', { fill: '#fff', filter: 'url(#feather)' }, mk);
+  // the polish thins out right at the cuticle instead of ending in a hard edge
+  N.maskCut = el('path', { fill: 'none', stroke: '#000', 'stroke-width': 2.6, 'stroke-opacity': 0.6, filter: 'url(#cutSoft)' }, mk);
+  // skin-fold shadow along the side walls + cuticle: the nail sits *under* the skin, not on top of it
+  N.fold = el('path', { class: 'lyr', fill: 'none', stroke: '#6a3a33', 'stroke-width': 3.4, 'stroke-linecap': 'round', filter: 'url(#fold)' }, g);
   // shadow under the free edge (only beyond the fingertip)
   const cp = el('clipPath', { id: 'beyond' + i }, defs);
   N.beyondRect = el('rect', { x: -100, width: 200 }, cp);
@@ -261,7 +307,9 @@ function buildNail(n, i, defs) {
   L.tip = el('path', { class: 'lyr tc' }, ng);
   // clip used when only the French tip is glitter
   N.tipClip = el('path', {}, el('clipPath', { id: 'tclip' + i }, defs));
-  L.glitter = el('g', { class: 'lyr' }, ng);
+  // flakes are clipped to the hard nail outline so none sparkle in the feathered halo outside the nail
+  N.clipPath = el('path', {}, el('clipPath', { id: 'nc' + i }, defs));
+  L.glitter = el('g', { class: 'lyr' }, el('g', { 'clip-path': `url(#nc${i})` }, ng));
   buildGlitter(N, L.glitter);
   // real nail texture from the photo, blended in
   const tg = el('g', { class: 'lyr', style: 'mix-blend-mode:soft-light' }, ng);
@@ -270,6 +318,7 @@ function buildNail(n, i, defs) {
   L.cut = el('path', { class: 'lyr', fill: 'url(#cutShade)' }, ng);
   L.shade = el('path', { class: 'lyr', fill: 'url(#edgeShade)' }, ng);
   L.tipLight = el('path', { class: 'lyr', fill: 'url(#tipLight)' }, ng);
+  L.ridge = el('path', { class: 'lyr', fill: 'url(#ridge)', filter: 'url(#blur1)', style: 'mix-blend-mode:screen' }, ng);
   L.matte = el('path', { class: 'lyr', fill: '#fff', filter: 'url(#noise)' }, ng);
   L.haze = el('path', { class: 'lyr', fill: '#fff' }, ng);      // matte top coat lifts blacks
   L.gloss = el('g', { class: 'lyr', style: 'mix-blend-mode:screen' }, ng);
@@ -277,7 +326,7 @@ function buildNail(n, i, defs) {
   N.gStreak = el('path', { fill: 'url(#streak)', filter: 'url(#blur2)' }, L.gloss);
   N.gCore = el('path', { fill: 'url(#streak)', filter: 'url(#feather)' }, L.gloss);
   N.gWin = el('path', { fill: 'url(#streak)', filter: 'url(#blur2)' }, L.gloss);
-  L.glints = el('g', { class: 'lyr' }, ng);
+  L.glints = el('g', { class: 'lyr' }, el('g', { 'clip-path': `url(#nc${i})` }, ng));
   buildGlints(N, L.glints);
   // hairline where polish meets the cuticle
   N.edge = el('path', { class: 'lyr', fill: 'none', stroke: '#3b1414', 'stroke-width': 1.6, filter: 'url(#feather)' }, g);
@@ -285,13 +334,13 @@ function buildNail(n, i, defs) {
 
 /* glitter: many tiny faceted flakes, deterministic layout */
 function buildGlitter(N, parent) {
-  const n = N.n, h = n.w / 2, top = -n.bed - n.w * 0.9;
+  const n = N.n, h = n.w / 2 * 1.2, span = n.bed + n.w * 1.65, top = -span;
   N.flakes = [];
   const groups = [el('g', { class: 'shim a' }, parent), el('g', { class: 'shim b' }, parent), el('g', {}, parent)];
   const GS = 1.3; // flake scale relative to the photo's nail size
-  const count = Math.round(n.w * (n.bed + n.w * 0.9) / (3.2 * GS * GS));
+  const count = Math.round(2 * h * span / (3.6 * GS * GS));
   for (let k = 0; k < count; k++) {
-    const x = (rnd() * 2 - 1) * h * 1.05, y = top + rnd() * (n.bed + n.w * 0.9 + 4);
+    const x = (rnd() * 2 - 1) * h, y = top + rnd() * (span + 4);
     const big = rnd() < 0.07, r = (big ? 1.6 + rnd() * 1.1 : 0.55 + rnd() * 0.9) * GS;
     const rot = rnd() * 60, pts = [];
     for (let j = 0; j < 6; j++) { const t = (rot + j * 60) * Math.PI / 180; pts.push(f2(x + r * Math.cos(t)) + ',' + f2(y + r * Math.sin(t))); }
@@ -313,12 +362,12 @@ function buildGlints(N, parent) {
 function layoutNails() {
   const design = byId(DESIGNS, state.design);
   R.nails.forEach((N) => {
-    const G = nailGeom(N.n), { d, h, yB, yT, yc } = G, w = N.n.w, L = N.L;
-    N.maskPath.setAttribute('d', d);
-    ['base', 'ombre', 'chrome', 'cut', 'shade', 'tipLight', 'matte', 'haze', 'shadow'].forEach((k) => (L[k] || N[k]).setAttribute('d', d));
-    N.gSheen.setAttribute('d', d);
+    const G = nailGeom(N.n), { d, yB, yT, yc } = G, w = N.n.w, L = N.L, h = Math.max(G.h, G.ht);
+    N.maskPath.setAttribute('d', d); N.maskCut.setAttribute('d', G.cut); N.fold.setAttribute('d', G.fold);
+    ['base', 'ombre', 'chrome', 'cut', 'shade', 'tipLight', 'ridge', 'matte', 'haze', 'shadow'].forEach((k) => (L[k] || N[k]).setAttribute('d', d));
+    N.gSheen.setAttribute('d', d); N.clipPath.setAttribute('d', d);
     N.beyondRect.setAttribute('y', yT - 20); N.beyondRect.setAttribute('height', Math.max(0, yB - (yT - 20) - 2));
-    N.edge.setAttribute('d', `M${-h * 0.9},${yc} C${-h * 0.5},${G.bed * 0.05} ${h * 0.5},${G.bed * 0.05} ${h * 0.9},${yc}`);
+    N.edge.setAttribute('d', G.cut);
     // natural free edge (beyond the fingertip)
     const nat = `M${-h - 4},${yT - 4} L${h + 4},${yT - 4} L${h + 4},${yB + 1} C${h * 0.5},${yB - w * 0.1} ${-h * 0.5},${yB - w * 0.1} ${-h - 4},${yB + 1} Z`;
     L.natural.setAttribute('d', nat);
@@ -341,6 +390,26 @@ function layoutNails() {
     N.gWin.setAttribute('d', lens(h * 0.5, w * 0.05, top + len * 0.25, bot - len * 0.2, -h * 0.05));
   });
 }
+function shadeById(id) { return CATALOG.find((c) => c.id === id) || CATALOG[0] || { id: 'x', brand: '', name: '', hex: '#b5122a', finish: 'glossy' }; }
+/* glitter flakes: an explicit glitter colour (GLITTERS) or, for 'cat', a palette derived from the catalog shade */
+function glitterPalette(C) {
+  if (state.glitter !== 'cat') return byId(GLITTERS, state.glitter) || GLITTERS[0];
+  const x = C.hex;
+  // sparkly flakes: tinted silver → light tints → white (no dark specks that read as dirt)
+  return { id: 'cat', holo: !!C.holo, he: '', en: '', palette: [mix(x, '#9aa0aa', 0.55), lighten(x, 0.35), lighten(x, 0.68), '#ffffff'] };
+}
+function lengthName() { return LENGTHS.reduce((a, b) => (Math.abs(b.v - state.len) < Math.abs(a.v - state.len) ? b : a)); }
+/* selecting a catalog shade applies its colour AND its finish */
+function applyShade(c) {
+  state.color = c.id;
+  if (c.finish === 'chrome') { state.design = 'chrome'; state.finish = 'glossy'; }
+  else {
+    if (!byId(DESIGNS, state.design).usesColor || state.design === 'chrome') state.design = 'solid';
+    state.finish = c.finish;
+    if (c.finish === 'glitter') state.glitter = 'cat';
+  }
+  render();
+}
 function depthName() {   // nearest preset for the slider value
   return FRENCH_DEPTHS.reduce((a, b) => (Math.abs(b.v - state.frDepth) < Math.abs(a.v - state.frDepth) ? b : a));
 }
@@ -351,7 +420,7 @@ function setA(e, a) { for (const k in a) e.setAttribute(k, typeof a[k] === 'numb
    --------------------------------------------------------------------- */
 function render() {
   const D = byId(DESIGNS, state.design), F = byId(FINISHES, state.finish), T = byId(TYPES, state.type);
-  const C = byId(COLORS, state.color), GL = byId(GLITTERS, state.glitter), S = byId(SKINS, state.skin);
+  const C = shadeById(state.color), GL = glitterPalette(C), S = byId(SKINS, state.skin);
   const natural = !D.base;
   const res = (v) => (v === 'color' ? C.hex : v);
   const isFr = D.tip === 'french';
@@ -373,12 +442,15 @@ function render() {
   // sheer/nude bases adapt to the chosen skin tone so they don't look chalky on darker skin
   if (S.target && !natural && D.base !== 'color' && (!isFr || FB.sheer)) baseHex = mix(baseHex, lighten(toHex(S.target), 0.2), 0.45);
   const dark = lum(natural ? '#ffffff' : (D.chrome || D.base === 'color' ? col : baseHex));
+  // side/cuticle shading uses a deep tint of the polish itself (not grey), so pale shades stay clean
+  const shadeCol = mix(darken(D.chrome || D.base === 'color' ? col : baseHex, 0.6), '#3a2024', 0.35);
+  [...R.stops.edge, ...R.stops.cut].forEach((x) => (x.style.stopColor = shadeCol));
 
   // glitter flake colors
   const GLx = tipGl || GL;   // which glitter palette the flakes use
   if (F.glitter || tipGl) {
     R.nails.forEach((N) => N.flakes.forEach((fl) => {
-      fl.p.style.fill = GLx.holo ? `hsl(${fl.hue.toFixed(0)},${fl.t === 3 ? 100 : 85}%,${[45, 62, 76, 92][fl.t]}%)` : GLx.palette[fl.t];
+      fl.p.style.fill = GLx.holo ? `hsl(${fl.hue.toFixed(0)},${fl.t === 3 ? 90 : 58}%,${[56, 68, 80, 93][fl.t]}%)` : GLx.palette[fl.t];
     }));
   }
   const gloss = natural ? 0 : F.gloss * T.glossK;
@@ -391,11 +463,12 @@ function render() {
     cut: natural ? 0 : 0.6 * F.shade,
     shade: natural ? 0 : Math.min(1, F.shade * T.depth * (bOp < 1 ? 0.4 : 0.55 + 0.35 * dark)),
     tipLight: natural ? 0 : F.matte ? 0.3 : 0.5,
+    ridge: natural ? 0 : F.matte ? 0.22 : F.glitter ? 0.3 : D.chrome ? 0.35 : 0.55 + 0.25 * (1 - dark),
     matte: !natural && F.matte ? 0.12 : 0,
     haze: !natural && F.matte ? 0.02 + (1 - dark) * 0.03 : 0,
     gloss: Math.min(1, gloss),
     glints: !natural && (F.glitter || tipGl) ? 1 : 0,
-    shadow: natural || state.length === 'short' ? 0 : 0,
+    shadow: 0,
     edge: natural ? 0 : 0.25,
   };
   R.nails.forEach((N) => {
@@ -409,6 +482,7 @@ function render() {
     [L.glitter, L.glints].forEach((e) => (clip ? e.setAttribute('clip-path', clip) : e.removeAttribute('clip-path')));
     for (const k in L) L[k].style.opacity = op[k];
     N.shadow.style.opacity = op.shadow; N.edge.style.opacity = op.edge;
+    N.fold.style.opacity = natural ? 0 : 0.16 + 0.14 * (1 - dark);
     N.gCore.style.opacity = F.matte ? 0 : T.sharp ? 0.95 : 0.3;
     N.gStreak.style.opacity = F.matte ? 1 : T.sharp ? 0.55 : 0.7;
     N.gStreak.setAttribute('filter', F.matte ? 'url(#blur4)' : 'url(#blur2)');
@@ -420,26 +494,30 @@ function render() {
   fitSvg();
 
   // labels
-  const Sh = byId(SHAPES, state.shape), Ln = byId(LENGTHS, state.length);
+  const Sh = byId(SHAPES, state.shape), Ln = lengthName();
+  const shadeName = `${C.brand} ${C.name}`;
   let he, en;
   if (natural) { he = 'ציפורן טבעית'; en = 'Natural nails'; }
   else {
-    he = [T.he, D.id === 'solid' ? null : D.he, F.he, D.usesColor ? C.he : null, isFr ? 'בסיס ' + FB.he : null, isFr ? 'קצה ' + FT.he + ' (' + depthName().he + ')' : null, F.glitter ? 'נצנצים ' + GL.he : null].filter(Boolean).join(' · ');
-    en = [T.en, D.id === 'solid' ? null : D.en, F.en, D.usesColor ? C.en : null, isFr ? FB.en + ' base' : null, isFr ? FT.en + ' tip (' + depthName().en + ')' : null, F.glitter ? GL.en + ' glitter' : null].filter(Boolean).join(' · ');
+    he = [T.he, D.id === 'solid' ? null : D.he, F.he, D.usesColor ? shadeName : null, isFr ? 'בסיס ' + FB.he : null, isFr ? 'קצה ' + FT.he + ' (' + depthName().he + ')' : null, F.glitter && GL.he ? 'נצנצים ' + GL.he : null].filter(Boolean).join(' · ');
+    en = [T.en, D.id === 'solid' ? null : D.en, F.en, D.usesColor ? shadeName : null, isFr ? FB.en + ' base' : null, isFr ? FT.en + ' tip (' + depthName().en + ')' : null, F.glitter && GL.en ? GL.en + ' glitter' : null].filter(Boolean).join(' · ');
   }
-  $('#selHe').textContent = he;
-  $('#selEn').textContent = `${en}  —  ${Ln.en} ${Sh.en} / ${Sh.he} ${Ln.he}`;
-  $('#colors').classList.toggle('disabled', !D.usesColor);
-  $('#colorHint').textContent = D.usesColor ? '' : 'לא בשימוש בעיצוב זה · not used by this design';
+  const wTxt = state.wid === 100 ? '' : ` · ${state.wid}%`;
+  $('#selHe').textContent = natural ? he : `${he} · ${Sh.he} ${Ln.he}`;
+  $('#selEn').textContent = natural ? en : `${en} · ${Ln.en} ${Sh.en}${wTxt}`;
+  $('#catHint').textContent = D.usesColor ? '' : 'בחירת גוון תעביר לצבע מלא · picking a shade switches to Solid';
   $('#glitterGroup').classList.toggle('hidden', !F.glitter);
   $('#frBaseGroup').classList.toggle('hidden', !isFr);
-  $('#colors').closest('.group').classList.toggle('hidden', isFr);   // French uses its own base/tip pickers
   $('#frTipGroup').classList.toggle('hidden', !isFr);
   $('#frDepthGroup').classList.toggle('hidden', !isFr);
   $('#frDepth').value = state.frDepth;
   document.querySelectorAll('[data-depth]').forEach((b) => b.classList.toggle('active', depthName().id === b.dataset.depth));
   ['finishGroup', 'typeGroup'].forEach((id) => $('#' + id).classList.toggle('disabled', natural));
   document.querySelectorAll('[data-k]').forEach((b) => b.classList.toggle('active', String(state[b.dataset.k]) === b.dataset.v));
+  document.querySelectorAll('.cat-sw').forEach((b) => { const on = b.dataset.id === state.color && D.usesColor; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on); });
+  $('#lenR').value = state.len; $('#widR').value = state.wid;
+  $('#lenOut').textContent = Math.round(state.len) + '%'; $('#widOut').textContent = state.wid + '%';
+  document.querySelectorAll('[data-len]').forEach((b) => b.classList.toggle('active', lengthName().id === b.dataset.len && Math.abs(lengthName().v - state.len) < 6));
 }
 
 /* ---------------------------------------------------------------------
@@ -454,7 +532,8 @@ function buildPanel() {
       state[k] = typeof state[k] === 'boolean' ? v === 'true' : v;
       if (k === 'color' && !byId(DESIGNS, state.design).usesColor) state.design = 'solid';
       if ((k === 'finish' || k === 'type') && state.design === 'natural') state.design = 'solid';
-      if (k === 'glitter') state.finish = 'glitter';
+      if (k === 'glitter') { state.finish = 'glitter'; if (state.design === 'natural' || state.design === 'chrome') state.design = 'solid'; }
+      if (k === 'finish' && v === 'glitter' && state.glitter === 'cat' && shadeById(state.color).finish !== 'glitter') state.glitter = 'gold';
       if (k === 'design') { const D = byId(DESIGNS, v); if (D.defTip) state.frTip = D.defTip; }
       if ((k === 'frBase' || k === 'frTip') && byId(DESIGNS, state.design).tip !== 'french') state.design = 'french';
       render();
@@ -465,7 +544,6 @@ function buildPanel() {
   DESIGNS.forEach((o) => mk(label(o), 'design', o.id, 'chip', $('#designs')));
   FINISHES.forEach((o) => mk(`<span class="fin fin-${o.id}"></span>` + label(o), 'finish', o.id, 'chip big', $('#finishes')));
   TYPES.forEach((o) => mk(label(o), 'type', o.id, 'chip', $('#types')));
-  COLORS.forEach((c) => mk(`<span class="dot" style="background:${c.hex}"></span><span class="nm">${c.he}</span>`, 'color', c.id, 'sw', $('#colors'), `${c.he} · ${c.en}`));
   GLITTERS.forEach((g) => {
     const bg = g.holo ? 'conic-gradient(from 30deg,#ff9ad5,#ffe48a,#9dffb0,#8ad8ff,#c49bff,#ff9ad5)'
       : `radial-gradient(circle at 30% 30%, ${g.palette[3]} 0 12%, transparent 13%), radial-gradient(circle at 70% 60%, ${g.palette[2]} 0 10%, transparent 11%), radial-gradient(circle at 45% 75%, ${g.palette[3]} 0 7%, transparent 8%), linear-gradient(135deg, ${g.palette[2]}, ${g.palette[1]} 45%, ${g.palette[0]})`;
@@ -485,12 +563,100 @@ function buildPanel() {
     $('#frDepthPresets').appendChild(b);
   });
   SHAPES.forEach((o) => mk(`<span>${o.he}</span><span class="en">${o.en}</span>`, 'shape', o.id, '', $('#shapes')));
-  LENGTHS.forEach((o) => mk(`<span>${o.he}</span><span class="en">${o.en}</span>`, 'length', o.id, '', $('#lengths')));
+  // continuous length / width sliders (relative to each finger's own nail) + length presets
+  $('#lenR').addEventListener('input', (e) => { state.len = +e.target.value; render(); });
+  $('#widR').addEventListener('input', (e) => { state.wid = +e.target.value; render(); });
+  $('#widReset').addEventListener('click', () => { state.wid = 100; render(); });
+  LENGTHS.forEach((o) => {
+    const b = document.createElement('button'); b.type = 'button'; b.dataset.len = o.id;
+    b.innerHTML = `<span>${o.he}</span><span class="en">${o.en}</span>`;
+    b.addEventListener('click', () => { state.len = o.v; render(); });
+    $('#lenPresets').appendChild(b);
+  });
   SKINS.forEach((s) => mk(`<span class="dot" style="background:${s.hex}"></span><span class="nm">${s.he}</span>`, 'skin', s.id, 'sw', $('#skins'), `${s.he} · ${s.en}`));
   mk('<span>כל היד</span><span class="en">Full hand</span>', 'zoom', 'false', '', $('#zooms'));
   mk('<span>זום לציפורניים</span><span class="en">Zoom nails</span>', 'zoom', 'true', '', $('#zooms'));
   $('#removeBtn').addEventListener('click', () => { state.design = 'natural'; render(); });
   $('#saveBtn').addEventListener('click', savePng);
+}
+
+/* ---------------------------------------------------------------------
+   Shade catalog UI: finish tabs, brand filter, search, grid grouped by finish
+   --------------------------------------------------------------------- */
+const FIN_ORDER = ['glossy', 'matte', 'glitter', 'chrome'];
+const esc = (t) => String(t).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+const finName = (f) => (CATALOG_META.finishes && CATALOG_META.finishes[f]) || { he: f, en: f };
+function swatchBg(c) {
+  const x = c.hex;
+  if (c.finish === 'chrome') return `linear-gradient(135deg, ${darken(x, 0.45)} 0%, ${lighten(x, 0.85)} 32%, ${x} 52%, ${lighten(x, 0.5)} 70%, ${darken(x, 0.5)} 100%)`;
+  if (c.finish === 'glitter') return c.holo ? `radial-gradient(circle at 30% 30%, #fff 0 8%, transparent 9%), radial-gradient(circle at 68% 62%, #fff 0 6%, transparent 7%), conic-gradient(from 30deg, #ffc2e6, #fff2b0, #c5ffd2, #bfe9ff, #dcc8ff, #ffc2e6)`
+    : `radial-gradient(circle at 28% 30%, ${lighten(x, 0.9)} 0 9%, transparent 10%), radial-gradient(circle at 70% 58%, ${lighten(x, 0.7)} 0 7%, transparent 8%), radial-gradient(circle at 44% 76%, #fff 0 5%, transparent 6%), linear-gradient(135deg, ${lighten(x, 0.4)}, ${x} 50%, ${darken(x, 0.35)})`;
+  if (c.finish === 'matte') return x;
+  return `radial-gradient(circle at 32% 26%, rgba(255,255,255,.75) 0 10%, rgba(255,255,255,0) 30%), ${x}`;
+}
+function buildCatalog() {
+  const tabs = $('#catTabs'), brandSel = $('#catBrand');
+  tabs.innerHTML = ''; brandSel.innerHTML = '';
+  [['all', { he: 'הכל', en: 'All' }], ...FIN_ORDER.map((f) => [f, finName(f)])].forEach(([id, nm]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'cat-tab'; b.dataset.tab = id; b.setAttribute('role', 'tab');
+    b.innerHTML = `<span class="he">${nm.he}<span class="cnt"></span></span><span class="en">${nm.en}</span>`;
+    b.addEventListener('click', () => { state.catTab = id; renderCatalog(); });
+    tabs.appendChild(b);
+  });
+  const brands = [...new Set(CATALOG.map((c) => c.brand))].sort();
+  brandSel.add(new Option('כל המותגים · All', ''));
+  brands.forEach((b) => brandSel.add(new Option(b, b)));
+  brandSel.value = state.catBrand;
+  brandSel.onchange = () => { state.catBrand = brandSel.value; renderCatalog(); };
+  $('#catSearch').oninput = (e) => { state.catQuery = e.target.value; renderCatalog(); };
+  $('#catNote').textContent = CATALOG_META.approximate === false ? '' :
+    'גוונים משוערים להמחשה בלבד · Approximate on-screen colours (names from brand ranges, not official colour data)';
+  renderCatalog();
+}
+function renderCatalog() {
+  const q = state.catQuery.trim().toLowerCase();
+  const pass = (c) => (!state.catBrand || c.brand === state.catBrand) &&
+    (!q || `${c.brand} ${c.line} ${c.name} ${finName(c.finish).he} ${finName(c.finish).en}`.toLowerCase().includes(q));
+  const list = CATALOG.filter(pass);
+  document.querySelectorAll('.cat-tab').forEach((t) => {
+    const n = t.dataset.tab === 'all' ? list.length : list.filter((c) => c.finish === t.dataset.tab).length;
+    t.querySelector('.cnt').textContent = n;
+    t.classList.toggle('active', t.dataset.tab === state.catTab);
+    t.setAttribute('aria-selected', t.dataset.tab === state.catTab);
+  });
+  const grid = $('#catGrid'); grid.innerHTML = '';
+  const fins = state.catTab === 'all' ? FIN_ORDER : [state.catTab];
+  let shown = 0;
+  fins.forEach((f) => {
+    const items = list.filter((c) => c.finish === f);
+    if (!items.length) return;
+    if (state.catTab === 'all') {
+      const hd = document.createElement('div'); hd.className = 'cat-sec';
+      hd.innerHTML = `${finName(f).he} <span class="en">${finName(f).en} · ${items.length}</span>`;
+      grid.appendChild(hd);
+    }
+    items.forEach((c) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'cat-sw'; b.dataset.id = c.id; b.dataset.finish = c.finish; b.title = `${c.brand} ${c.line} — ${c.name} (${finName(c.finish).en})`;
+      b.innerHTML = `<span class="dot fin-${c.finish}" style="background:${swatchBg(c)}"></span><span class="nm">${esc(c.name)}</span><span class="br">${esc(c.brand)}</span>`;
+      b.addEventListener('click', () => applyShade(c));
+      grid.appendChild(b); shown++;
+    });
+  });
+  if (!shown) grid.innerHTML = '<p class="cat-empty">לא נמצאו גוונים · No shades found</p>';
+  const D = byId(DESIGNS, state.design);
+  document.querySelectorAll('.cat-sw').forEach((b) => { const on = b.dataset.id === state.color && D.usesColor; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on); });
+}
+/* catalog.json (network / SW cache) → fall back to the inline copy */
+async function loadCatalog() {
+  try {
+    if (!location.protocol.startsWith('http')) throw new Error('no fetch on file://');
+    const r = await fetch('catalog.json', { cache: 'no-cache' });
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    if (Array.isArray(j.shades) && j.shades.length) { CATALOG = j.shades; CATALOG_META = j; }
+  } catch (e) { /* keep inline fallback */ }
 }
 
 /* ---------------------------------------------------------------------
@@ -512,9 +678,9 @@ function savePng() {
     x.drawImage(img, 0, 0);
     x.textAlign = 'center'; x.direction = 'rtl'; x.fillStyle = '#6b4a56';
     x.font = '600 34px Assistant, Rubik, Heebo, "IBM Plex Sans Hebrew", Arial, sans-serif';
-    x.fillText($('#selHe').textContent, W / 2, H - 78);
+    x.fillText($('#selHe').textContent, W / 2, H - 78, W - 60);
     x.direction = 'ltr'; x.fillStyle = '#a3929a'; x.font = '22px system-ui, Arial, sans-serif';
-    x.fillText($('#selEn').textContent, W / 2, H - 40);
+    x.fillText($('#selEn').textContent, W / 2, H - 40, W - 60);
     const fname = `nail-look-${state.design}-${state.finish}-${state.color}.png`;
     // Android app wrapper: hand the PNG to native code (saves to Pictures/)
     if (window.AndroidBridge) { window.AndroidBridge.savePng(cv.toDataURL('image/png').split(',')[1], fname); return; }
@@ -548,4 +714,6 @@ window.addEventListener('resize', fitSvg);
 
 buildSvg();
 buildPanel();
+buildCatalog();
 render();
+loadCatalog().then(() => { buildCatalog(); render(); });

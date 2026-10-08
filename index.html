@@ -31,7 +31,7 @@
   <section class="stage" aria-label="תצוגת יד">
     <div class="selection" aria-live="polite">
       <div class="sel-he" id="selHe"></div>
-      <div class="sel-en en" id="selEn"></div>
+      <div class="sel-en en" id="selEn" dir="ltr"></div>
     </div>
     <div class="hand-wrap">
       <svg id="hand" viewBox="-60 -120 1238 1580" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hand preview"></svg>
@@ -39,6 +39,17 @@
   </section>
 
   <aside class="panel">
+    <div class="group" id="catalogGroup">
+      <div class="group-head"><h2>קטלוג גוונים</h2><span class="en">Shade catalog</span><span class="hint" id="catHint"></span></div>
+      <div class="cat-tabs" id="catTabs" role="tablist" aria-label="Finish"></div>
+      <div class="cat-tools">
+        <input type="search" id="catSearch" placeholder="חיפוש · Search" aria-label="חיפוש גוון · Search shades" autocomplete="off">
+        <select id="catBrand" aria-label="מותג · Brand"></select>
+      </div>
+      <div class="cat-grid" id="catGrid"></div>
+      <p class="cat-note" id="catNote"></p>
+    </div>
+
     <div class="group">
       <div class="group-head"><h2>עיצוב</h2><span class="en">Design</span></div>
       <div class="chips" id="designs"></div>
@@ -76,20 +87,21 @@
       <div class="chips two" id="types"></div>
     </div>
 
-    <div class="group">
-      <div class="group-head"><h2>צבע</h2><span class="en">Color</span><span class="hint" id="colorHint"></span></div>
-      <div class="swatches" id="colors"></div>
+
+    <div class="group" id="shapeGroup">
+      <div class="group-head"><h2>צורה</h2><span class="en">Shape</span></div>
+      <div class="seg shapes" id="shapes"></div>
     </div>
 
-    <div class="group two">
-      <div>
-        <div class="group-head"><h2>צורה</h2><span class="en">Shape</span></div>
-        <div class="seg" id="shapes"></div>
-      </div>
-      <div>
-        <div class="group-head"><h2>אורך</h2><span class="en">Length</span></div>
-        <div class="seg" id="lengths"></div>
-      </div>
+    <div class="group" id="sizeGroup">
+      <div class="group-head"><h2>אורך</h2><span class="en">Length</span><output class="val" id="lenOut"></output></div>
+      <input type="range" id="lenR" min="0" max="100" step="1" value="32" aria-label="אורך · Length">
+      <div class="seg row" id="lenPresets"></div>
+      <div class="group-head sub"><h2>רוחב</h2><span class="en">Width</span><output class="val" id="widOut"></output>
+        <button type="button" class="mini" id="widReset" title="איפוס · Reset">↺</button></div>
+      <input type="range" id="widR" min="80" max="120" step="1" value="100" aria-label="רוחב · Width">
+      <div class="range-ends"><span>צר · narrow</span><span>רחב · wide</span></div>
+      <p class="hint-line">מותאם אוטומטית לכל אצבע · adapts to each finger's own nail</p>
     </div>
 
     <div class="group">
@@ -110,6 +122,7 @@
   </aside>
 </main>
 <script src="hand-photo.js"></script>
+<script src="catalog-fallback.js"></script>
 <script src="app.js"></script>
 <script>
   // offline support (PWA). Service workers only run over http(s), not when opened from file://
